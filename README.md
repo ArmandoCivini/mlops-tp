@@ -76,7 +76,8 @@ entrenamiento (ver `src/perfume_features.py`); es una limitación documentada, n
 4. Una vez arriba:
    - Airflow: http://localhost:8080 (usuario/clave: `airflow` / `airflow`)
    - MLflow: http://localhost:5001
-   - MinIO (administración de buckets): http://localhost:9001 (usuario/clave: `minio` / `minio123`)
+   - SeaweedFS (storage S3, reemplazo de MinIO — ver nota abajo): API en `localhost:9000`,
+     status del nodo en http://localhost:9001 (no tiene un browser de buckets como el de MinIO)
    - Jupyter (para el notebook de experimentación): http://localhost:8888 — corre adentro de
      Docker, sin token/contraseña (uso local). No hace falta instalar Python/Jupyter/Optuna en tu
      máquina: la idea es que cualquiera del grupo pueda correr exactamente lo mismo, sin depender
@@ -166,8 +167,13 @@ Lo que falta / próximos pasos:
   pipeline está automatizado y es más barato iterar.
 - Sumar tests automáticos básicos (por ejemplo, un test de que `transform()` produce siempre 256
   columns en el mismo orden) y CI.
-- **Migrar de MinIO a otro storage S3-compatible.** MinIO borró sus imágenes públicas de Docker
-  Hub el 11-14/09/2026 y dejó de publicar versiones de acceso libre; por ahora el
-  `docker-compose.yaml` apunta a un tag fijo de `quay.io` (la última versión que llegó a ser
-  pública) como parche, pero no van a salir más actualizaciones gratuitas. Alternativas
-  evaluadas para una futura migración: SeaweedFS (Apache-2.0, la más madura) o Garage.
+- **Ya no usamos MinIO — pasamos a SeaweedFS.** MinIO borró sus imágenes públicas de Docker Hub
+  el 11-14/09/2026, y el 24/09/2026 bloqueó también los tags fijos de `quay.io` (probamos primero
+  pinear una versión puntual como parche, y en un día también quedó bloqueada). Como no queda
+  ninguna forma gratuita de seguir usando MinIO, reemplazamos el servicio `s3` por
+  [SeaweedFS](https://github.com/seaweedfs/seaweedfs) (Apache-2.0, imágenes públicas), que habla
+  el mismo protocolo S3 — ningún otro servicio necesitó cambios, todos siguen usando
+  `http://s3:9000`. Limitación conocida: SeaweedFS no trae un browser de buckets tan cómodo como
+  la consola de MinIO; para inspeccionar el contenido de los buckets a mano, se puede usar el
+  mismo contenedor de `aws-cli` que usa `create_s3_buckets` (`aws --endpoint-url http://s3:9000
+  s3 ls s3://data/`).
