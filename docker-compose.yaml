@@ -22,6 +22,10 @@
 x-airflow-common: &airflow-common
   build: './dockerfiles/airflow'
   image: ${AIRFLOW_IMAGE_NAME:-extending_airflow:latest}
+  # Sin esto, "docker compose up" (sin --build) intenta bajar esta imagen de Docker Hub como si
+  # fuera pública, y falla con "pull access denied" porque es nuestra, hecha a medida. Con
+  # pull_policy: build, Compose siempre la construye localmente, nunca intenta bajarla.
+  pull_policy: build
   profiles:
     - airflow
     - all
@@ -74,6 +78,7 @@ services:
     restart: always
     build: './dockerfiles/postgres'
     image: postgres_system
+    pull_policy: build
     container_name: postgres
     profiles:
       - airflow
@@ -162,6 +167,7 @@ services:
     restart: always
     build: "./dockerfiles/mlflow"
     image: mlflow
+    pull_policy: build
     container_name: mlflow
     profiles:
       - mlflow
@@ -195,6 +201,7 @@ services:
     restart: always
     build: "./dockerfiles/jupyter"
     image: jupyter_perfume
+    pull_policy: build
     container_name: jupyter
     profiles:
       - mlflow
@@ -228,6 +235,7 @@ services:
       context: .
       dockerfile: dockerfiles/fastapi/Dockerfile
     image: backend_fastapi
+    pull_policy: build
     container_name: fastapi
     profiles:
       - all
