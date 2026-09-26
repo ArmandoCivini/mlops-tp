@@ -201,8 +201,8 @@ services:
       - AWS_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:-minio123}
       - MLFLOW_S3_ENDPOINT_URL=http://s3:9000
     command: >
-      mlflow server 
-      --backend-store-uri postgresql://${PG_USER:-airflow}:${PG_PASSWORD:-airflow}@postgres:5432/mlflow_db
+      mlflow server
+      --backend-store-uri postgresql+psycopg2://${PG_USER:-airflow}:${PG_PASSWORD:-airflow}@postgres:5432/mlflow_db
       --host 0.0.0.0
       --default-artifact-root s3://${MLFLOW_BUCKET_NAME:-mlflow}/
       --workers 1
