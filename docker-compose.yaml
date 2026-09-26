@@ -119,7 +119,12 @@ services:
   
   s3:
     restart: always
-    image: quay.io/minio/minio:latest
+    # MinIO borró "minio/minio" de Docker Hub el 11-14/09/2026, y el tag ":latest" de quay.io
+    # quedó bloqueado para descargas anónimas. Este tag puntual (la última versión que publicaron
+    # antes de cerrar el acceso público) sigue siendo público. Es un parche, no una solución
+    # definitiva: MinIO no va a sacar más versiones de acceso libre (ver "Próximos pasos" en el
+    # README) — el proyecto sigue vivo, pero pasó a ser de pago/con cuenta.
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: minio
     profiles:
       - mlflow
@@ -144,7 +149,8 @@ services:
       retries: 3
 
   create_s3_buckets:
-    image: quay.io/minio/mc:latest
+    # Mismo motivo que el servicio "s3" de arriba: tag fijo en vez de ":latest".
+    image: quay.io/minio/mc:RELEASE.2025-09-07T16-13-09Z
     container_name: minio_create_bucket
     profiles:
       - mlflow

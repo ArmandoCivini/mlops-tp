@@ -166,3 +166,8 @@ Lo que falta / próximos pasos:
   pipeline está automatizado y es más barato iterar.
 - Sumar tests automáticos básicos (por ejemplo, un test de que `transform()` produce siempre 256
   columns en el mismo orden) y CI.
+- **Migrar de MinIO a otro storage S3-compatible.** MinIO borró sus imágenes públicas de Docker
+  Hub el 11-14/09/2026 y dejó de publicar versiones de acceso libre; por ahora el
+  `docker-compose.yaml` apunta a un tag fijo de `quay.io` (la última versión que llegó a ser
+  pública) como parche, pero no van a salir más actualizaciones gratuitas. Alternativas
+  evaluadas para una futura migración: SeaweedFS (Apache-2.0, la más madura) o Garage.
