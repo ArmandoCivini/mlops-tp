@@ -38,7 +38,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__API__SECRET_KEY: '${AIRFLOW_SECRET_KEY:-qt2Edq6LIRdv5k0DDznVOA==}'
     AIRFLOW__API_AUTH__JWT_SECRET: '${AIRFLOW_API_JWT_SECRET:-qt2Edq6LIRdv5k0DDznVOA==}'
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
-    AIRFLOW__CORE__LOAD_EXAMPLES: 'true' # Change to 'false' to remove the tutorials and examples
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false' # Change to 'false' to remove the tutorials and examples
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-apiserver:8080/execution/'
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
     AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'True'
@@ -54,6 +54,11 @@ x-airflow-common: &airflow-common
     - ${AIRFLOW_PROJ_DIR:-./airflow}/config:/opt/airflow/config
     - ${AIRFLOW_PROJ_DIR:-./airflow}/plugins:/opt/airflow/plugins
     - ${AIRFLOW_PROJ_DIR:-./airflow}/secrets:/opt/secrets
+    # Dataset crudo de Parfumo, de solo lectura. A diferencia del ejemplo de Heart Disease
+    # (que se descarga en vivo desde la API de UCI en el DAG), acá no hay una API pública de
+    # perfumes: el CSV se versiona en el repo y el DAG `process_perfume_data` solo lo publica
+    # en el bucket `s3://data` (tarea `get_data`, ver airflow/dags/etl_process.py).
+    - ${AIRFLOW_PROJ_DIR:-./airflow}/../data:/opt/airflow/data_raw:ro
   networks:
     - frontend
     - backend
@@ -106,7 +111,7 @@ services:
       retries: 50
       start_period: 30s
     restart: always
-
+  
   s3:
     restart: always
     image: quay.io/minio/minio:latest
@@ -186,9 +191,42 @@ services:
       timeout: 10s
       retries: 3
 
+  jupyter:
+    restart: always
+    build: "./dockerfiles/jupyter"
+    image: jupyter_perfume
+    container_name: jupyter
+    profiles:
+      - mlflow
+      - all
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    ports:
+      - "${JUPYTER_PORT:-8888}:8888"
+    networks:
+      - frontend
+      - backend
+    environment:
+      - AWS_ACCESS_KEY_ID=${MINIO_ACCESS_KEY:-minio}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:-minio123}
+      - MLFLOW_S3_ENDPOINT_URL=http://s3:9000
+      - AWS_ENDPOINT_URL_S3=http://s3:9000
+    volumes:
+      # El notebook y sus módulos auxiliares (mlflow_aux.py, optuna_aux.py) quedan editables
+      # desde el host, pero corren adentro del contenedor: nadie necesita Python/Jupyter
+      # instalado localmente, todos corren exactamente el mismo entorno.
+      - ./notebook_example:/home/jovyan/notebook_example
+    working_dir: /home/jovyan/notebook_example
+    command: >
+      jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser --allow-root
+      --NotebookApp.token='' --NotebookApp.password=''
+
   fastapi:
     restart: always
-    build: "./dockerfiles/fastapi"
+    build:
+      context: .
+      dockerfile: dockerfiles/fastapi/Dockerfile
     image: backend_fastapi
     container_name: fastapi
     profiles:
@@ -266,7 +304,7 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
-  
+
   airflow-worker:
     <<: *airflow-common
     command: celery worker -c 2
@@ -290,8 +328,8 @@ services:
       airflow-apiserver:
         condition: service_healthy
       airflow-init:
-        condition: service_completed_successfully       
-
+        condition: service_completed_successfully
+  
   airflow-triggerer:
     <<: *airflow-common
     command: triggerer
