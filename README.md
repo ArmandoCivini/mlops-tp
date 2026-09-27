@@ -2,6 +2,8 @@
 
 ### CEIA - FIUBA
 
+**Integrantes:** Jaime Ricardo Pinzon Aparicio, Tomás Civini, Francisco Facchini, Roosebelt Yonatan Carmen Aguirre.
+
 Este repo productiviza, en el ambiente de **ML Models and something more Inc.** (Docker + Apache
 Airflow + MLflow + PostgreSQL + MinIO + FastAPI), el modelo desarrollado en el TP final de
 **Aprendizaje de Máquina I**: *"Clasificación de familia olfativa en perfumes a partir de su
