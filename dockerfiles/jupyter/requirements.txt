@@ -4,7 +4,10 @@ optuna>=3.6
 awswrangler>=3.9
 pandas
 numpy
-scikit-learn
+# Fijo a la misma versión que usa dockerfiles/fastapi/requirements.txt: los modelos que este
+# notebook entrena y registra en MLflow los tiene que poder deserializar la API después, y eso
+# solo funciona confiablemente si ambos lados usan la misma versión de scikit-learn.
+scikit-learn==1.8.0
 matplotlib
 seaborn
 boto3

@@ -119,44 +119,38 @@ services:
   
   s3:
     restart: always
-    # Reemplazo de MinIO por SeaweedFS (24/09/2026): MinIO borró sus imágenes de Docker Hub y
-    # bloqueó incluso los tags fijos de quay.io esta semana (ver "Próximos pasos" en el README).
-    # SeaweedFS es open-source (Apache-2.0), sigue teniendo imágenes públicas, y habla el mismo
-    # protocolo S3 — por eso ningún otro servicio (mlflow, airflow, fastapi, jupyter) necesita
-    # cambios: todos siguen apuntando a "http://s3:9000" como si nada, sólo cambió lo que corre
-    # detrás de ese nombre.
-    image: chrislusf/seaweedfs:4.06
-    container_name: s3_storage
+    # MinIO borró sus imágenes de Docker Hub (11-14/09/2026) y después bloqueó también los tags
+    # fijos de quay.io (24/09/2026) — llegamos a migrar todo el servicio a SeaweedFS como parche.
+    # El 27/09/2026 la cátedra actualizó el repo base (amq2-service-ml) para apuntar a este mirror
+    # de Docker Hub, mantenido por otro proyecto justamente para este problema (ver "Próximos
+    # pasos" en el README). Volvimos a MinIO con esta imagen para quedar alineados con el resto
+    # de la clase — ningún otro servicio cambia, todos siguen apuntando a "http://s3:9000".
+    image: coollabsio/minio:RELEASE.2025-04-22T22-12-26Z
+    container_name: minio
     profiles:
       - mlflow
       - airflow
       - all
     ports:
       - "${MINIO_PORT:-9000}:9000"
-      # Reemplaza a la consola web de MinIO: SeaweedFS no tiene un browser de buckets tan
-      # amigable, esto es solo el status del nodo master (JSON), no una UI para navegar archivos.
-      - "${MINIO_PORT_UI:-9001}:9333"
+      - "${MINIO_PORT_UI:-9001}:9001"
     networks:
       - frontend
       - backend
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-minio}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_ACCESS_KEY:-minio123}
     volumes:
       - minio_data:/data
-      # Usuario/clave del S3 (minio/minio123, iguales a los que ya usa el resto del stack).
-      - ./dockerfiles/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
-    command: >
-      server -dir=/data -ip=s3 -master.port=9333 -volume.port=8080 -filer.port=8888
-      -s3 -s3.port=9000 -s3.config=/etc/seaweedfs/s3.json
+    command: server /data --console-address :9001
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://localhost:9333/cluster/status || exit 1"]
+      test: ["CMD", "mc", "ready", "local"]
       interval: 60s
       timeout: 20s
-      retries: 5
-      start_period: 30s
+      retries: 3
 
   create_s3_buckets:
-    # "mc" (el cliente de MinIO) también quedó bloqueado junto con el servidor. Usamos el cliente
-    # oficial de AWS (siempre público) para crear los buckets contra el endpoint S3 de SeaweedFS.
-    image: amazon/aws-cli:2.17.62
+    image: coollabsio/minio:RELEASE.2025-04-22T22-12-26Z
     container_name: s3_create_buckets
     profiles:
       - mlflow
@@ -166,17 +160,13 @@ services:
       - s3
     networks:
       - backend
-    environment:
-      - AWS_ACCESS_KEY_ID=${MINIO_ACCESS_KEY:-minio}
-      - AWS_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:-minio123}
-      - AWS_DEFAULT_REGION=us-east-1
     entrypoint: >
-      /bin/sh -c '
-      sleep 10;
-      aws --endpoint-url http://s3:9000 s3 mb s3://${MLFLOW_BUCKET_NAME:-mlflow} || true;
-      aws --endpoint-url http://s3:9000 s3 mb s3://${DATA_REPO_BUCKET_NAME:-data} || true;
+      /bin/sh -c "
+      until (/usr/bin/mc alias set s3 http://s3:9000 ${MINIO_ACCESS_KEY:-minio} ${MINIO_SECRET_ACCESS_KEY:-minio123}) do echo '...esperando a que arranque minio...' && sleep 1; done;
+      /usr/bin/mc mb s3/${DATA_REPO_BUCKET_NAME:-data};
+      /usr/bin/mc mb s3/${MLFLOW_BUCKET_NAME:-mlflow};
       exit 0;
-      '
+      "
 
   mlflow:
     restart: always

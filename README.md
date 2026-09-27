@@ -76,8 +76,8 @@ entrenamiento (ver `src/perfume_features.py`); es una limitación documentada, n
 4. Una vez arriba:
    - Airflow: http://localhost:8080 (usuario/clave: `airflow` / `airflow`)
    - MLflow: http://localhost:5001
-   - SeaweedFS (storage S3, reemplazo de MinIO — ver nota abajo): API en `localhost:9000`,
-     status del nodo en http://localhost:9001 (no tiene un browser de buckets como el de MinIO)
+   - MinIO (storage S3 — ver nota abajo sobre la imagen que usamos): consola web de buckets en
+     http://localhost:9001 (usuario/clave: `minio` / `minio123`), API en `localhost:9000`
    - Jupyter (para el notebook de experimentación): http://localhost:8888 — corre adentro de
      Docker, sin token/contraseña (uso local). No hace falta instalar Python/Jupyter/Optuna en tu
      máquina: la idea es que cualquiera del grupo pueda correr exactamente lo mismo, sin depender
@@ -167,13 +167,14 @@ Lo que falta / próximos pasos:
   pipeline está automatizado y es más barato iterar.
 - Sumar tests automáticos básicos (por ejemplo, un test de que `transform()` produce siempre 256
   columns en el mismo orden) y CI.
-- **Ya no usamos MinIO — pasamos a SeaweedFS.** MinIO borró sus imágenes públicas de Docker Hub
-  el 11-14/09/2026, y el 24/09/2026 bloqueó también los tags fijos de `quay.io` (probamos primero
-  pinear una versión puntual como parche, y en un día también quedó bloqueada). Como no queda
-  ninguna forma gratuita de seguir usando MinIO, reemplazamos el servicio `s3` por
-  [SeaweedFS](https://github.com/seaweedfs/seaweedfs) (Apache-2.0, imágenes públicas), que habla
-  el mismo protocolo S3 — ningún otro servicio necesitó cambios, todos siguen usando
-  `http://s3:9000`. Limitación conocida: SeaweedFS no trae un browser de buckets tan cómodo como
-  la consola de MinIO; para inspeccionar el contenido de los buckets a mano, se puede usar el
-  mismo contenedor de `aws-cli` que usa `create_s3_buckets` (`aws --endpoint-url http://s3:9000
-  s3 ls s3://data/`).
+- **Historial del problema con la imagen de MinIO (ya resuelto).** MinIO borró sus imágenes
+  públicas de Docker Hub el 11-14/09/2026, y el 24/09/2026 bloqueó también los tags fijos de
+  `quay.io`. Como parche temporal llegamos a reemplazar el servicio `s3` por
+  [SeaweedFS](https://github.com/seaweedfs/seaweedfs) (otro storage S3-compatible, con imágenes
+  públicas). El 27/09/2026 la cátedra actualizó el repo base
+  ([amq2-service-ml](https://github.com/facundolucianna/amq2-service-ml)) para apuntar a
+  [`coollabsio/minio`](https://github.com/coollabsio/minio), un mirror de Docker Hub mantenido por
+  otro proyecto justamente para este problema. Volvimos a usar MinIO con esa imagen
+  (`coollabsio/minio:RELEASE.2025-04-22T22-12-26Z`) para quedar alineados con el resto de la
+  cátedra — ningún otro servicio necesitó cambios, todos siguen usando `http://s3:9000`, y
+  recuperamos la consola web de buckets (http://localhost:9001) que SeaweedFS no tenía.
