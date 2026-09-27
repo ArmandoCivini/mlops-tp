@@ -5,7 +5,7 @@
 Este repo productiviza, en el ambiente de **ML Models and something more Inc.** (Docker + Apache
 Airflow + MLflow + PostgreSQL + MinIO + FastAPI), el modelo desarrollado en el TP final de
 **Aprendizaje de Máquina I**: *"Clasificación de familia olfativa en perfumes a partir de su
-composición de notas"* (Francisco Facchini).
+composición de notas"*.
 
 El modelo predice la **familia olfativa dominante** de un perfume (una de 20 clases: `Floral`,
 `Woody`, `Spicy`, `Fresh`, etc.) a partir de su composición de notas (salida/corazón/fondo) y
