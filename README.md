@@ -78,17 +78,19 @@ entrenamiento (ver `src/perfume_features.py`); es una limitación documentada, n
    - MLflow: http://localhost:5001
    - MinIO (storage S3 — ver nota abajo sobre la imagen que usamos): consola web de buckets en
      http://localhost:9001 (usuario/clave: `minio` / `minio123`), API en `localhost:9000`
-   - Jupyter (para el notebook de experimentación): http://localhost:8888 — corre adentro de
+   - Jupyter (para el notebook de experimentación): http://localhost:8889 — corre adentro de
      Docker, sin token/contraseña (uso local). No hace falta instalar Python/Jupyter/Optuna en tu
      máquina: la idea es que cualquiera del grupo pueda correr exactamente lo mismo, sin depender
-     de su propio setup.
+     de su propio setup. Usamos el puerto 8889 (no el 8888 de siempre) porque en Mac con
+     Anaconda instalado suele haber un Jupyter local propio escuchando justo en `localhost:8888`,
+     y el navegador termina conectándose a ese en vez de al de Docker.
    - API: http://localhost:8800/ — documentación interactiva en http://localhost:8800/docs
 
 ## Orden para probar el flujo completo
 
 1. En Airflow, activá y corré el DAG **`process_perfume_data`**. Esto sube el dataset a
    `s3://data` y arma la matriz de features + el split train/test.
-2. Abrí Jupyter en http://localhost:8888 y corré **`notebook_example/experiment_mlflow.ipynb`**
+2. Abrí Jupyter en http://localhost:8889 y corré **`notebook_example/experiment_mlflow.ipynb`**
    (ya viene con las variables de entorno apuntando a los servicios de Docker — `mlflow:5000` y
    `s3:9000` — no a `localhost`, porque el notebook corre dentro de la misma red de contenedores).
    Esto busca el mejor modelo con Optuna y lo registra en MLflow con el alias `champion`.
@@ -140,24 +142,39 @@ docker compose down --rmi all --volumes
 
 ## Estado de avance (entrega parcial)
 
-Lo que está implementado y probado en este repo:
+Lo que está implementado, corrido y probado en este repo (end-to-end, en Docker):
 
-- DAG de ETL (`process_perfume_data`) — limpieza, feature engineering y split, portado y validado
-  contra la misma lógica y los mismos números del TP de AMq1 (21.032 perfumes limpios, 20 clases,
-  256 features).
-- Experimento de MLflow con búsqueda de hiperparámetros (Optuna) sobre los 5 algoritmos del TP de
-  AMq1, con registro de modelo campeón.
-- Servicio de FastAPI (`/predict/`) que sirve el modelo campeón (con fallback a un modelo por
-  defecto empaquetado en la imagen), usando la misma lógica de features que el entrenamiento.
+- Stack completo levantado con `docker compose --profile all up --build`: los 12 servicios
+  (Airflow x5, MLflow, MinIO, `create_s3_buckets`, Postgres, Redis, Jupyter, FastAPI) llegan a
+  `healthy`/corriendo sin errores.
+- DAG de ETL (`process_perfume_data`) corrido en Airflow con éxito (las 3 tareas en `success`) —
+  limpieza, feature engineering y split, portado y validado contra la misma lógica y los mismos
+  números del TP de AMq1 (21.032 perfumes limpios, 20 clases, 256 features).
+- Notebook `experiment_mlflow.ipynb` corrido dentro del contenedor de Jupyter: búsqueda de
+  hiperparámetros con Optuna (`N_TRIALS=30`) sobre los 5 algoritmos del TP de AMq1, con el mejor
+  modelo (`GradientBoosting`, f1_macro en test ≈ 0.194) registrado en MLflow con el alias
+  `champion`.
+- Servicio de FastAPI (`/predict/`) probado contra ese modelo campeón real (no el fallback): el
+  endpoint `POST /predict/` devuelve `200` con `dominant_accord` y las probabilidades, igual que
+  el ejemplo de este README.
 - DAG de reentrenamiento (`retrain_the_model`) con comparación challenger vs. campeón por
-  `f1_macro`.
+  `f1_macro` (implementado, pendiente de correr una vez que haya más de una corrida del ETL para
+  comparar contra).
+
+**Bug encontrado y resuelto: `mlflow.get_artifact_uri()` con MLflow 3.x.** El notebook original
+guardaba el modelo con `mlflow.sklearn.log_model(..., artifact_path=...)` (parámetro deprecado) y
+después reconstruía la URL del modelo a mano con `mlflow.get_artifact_uri(artifact_path)`. Con
+MLflow 3.x eso asume el layout viejo (`runs/<run_id>/artifacts/<path>`), pero el modelo se termina
+guardando bajo el esquema nuevo de "Logged Models" — al intentar cargarlo de vuelta daba
+`404 Not Found`, y como el registro del modelo en MLflow se creaba igual (quedaba con un `source`
+roto, apuntando a un archivo que no existe), la API caía silenciosamente al modelo de fallback sin
+avisar. Se corrigió usando `name=` en vez de
+`artifact_path=` y tomando la URL directo del `model_info` que devuelve `log_model(...)`
+(`model_info.model_uri`), que es la forma soportada en MLflow 3.x.
 
 Lo que falta / próximos pasos:
 
-- Correr el stack completo end-to-end en un entorno limpio (instalación de Docker todavía en
-  curso) y confirmar los 5 servicios healthy (Airflow, MLflow, MinIO, Jupyter, FastAPI).
-- Correr `experiment_mlflow.ipynb` con un `n_trials` más alto (acá se corrió/probó con un número
-  chico para no bloquear la entrega parcial) y comparar los resultados finales contra los del TP de
+- Correr `experiment_mlflow.ipynb` con un `n_trials` todavía más alto y comparar los resultados finales contra los del TP de
   AMq1 (SVM f1_macro=0.249, Gradient Boosting f1_macro=0.188 en el notebook original).
   Analizar si conviene ponderar el trade-off costo/beneficio distinto acá, dado que el modelo se
   va a reentrenar periódicamente (ver nota en `retrain_the_model.py` sobre por qué Gradient
