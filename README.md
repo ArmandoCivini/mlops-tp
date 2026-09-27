@@ -5,20 +5,17 @@
 Este repo productiviza, en el ambiente de **ML Models and something more Inc.** (Docker + Apache
 Airflow + MLflow + PostgreSQL + MinIO + FastAPI), el modelo desarrollado en el TP final de
 **Aprendizaje de Máquina I**: *"Clasificación de familia olfativa en perfumes a partir de su
-composición de notas"* (Francisco Facchini, nota 10/10).
+composición de notas"*.
 
 El modelo predice la **familia olfativa dominante** de un perfume (una de 20 clases: `Floral`,
 `Woody`, `Spicy`, `Fresh`, etc.) a partir de su composición de notas (salida/corazón/fondo) y
 metadata básica (año, concentración), usando el catálogo público de
-[Parfumo](https://www.parfumo.com/) (59.325 perfumes). Este mismo dataset se usa en paralelo en mi
-proyecto de tesis *Perfume Astral* (generación de fórmulas de perfume a partir de cartas
-astrológicas): la idea de fondo, documentada ya en el TP de AMq1, es que un clasificador así puede
+[Parfumo](https://www.parfumo.com/) (59.325 perfumes). 
+La idea de fondo, documentada ya en el TP de AMq1, es que un clasificador así puede
 usarse para etiquetar automáticamente fórmulas nuevas sin depender de un experto humano.
 
 > **Alcance de este TP.** Lo que se productiviza acá es el clasificador notas → familia olfativa,
-> nada más. La lectura de carta astral y la generación de la fórmula del perfume (las otras dos
-> partes de Perfume Astral) quedan fuera: son proyectos separados, sin componente de Machine
-> Learning supervisado evaluable de la misma manera.
+> nada más..
 
 ## Arquitectura
 
@@ -49,7 +46,7 @@ Lo que se agregó/adaptó respecto al ejemplo de Heart Disease de la cátedra:
 `dominant_accord` es la primera familia de la lista `Main_Accords` que declara Parfumo para cada
 perfume (Parfumo las ordena de mayor a menor intensidad percibida). Es una simplificación: un
 perfume real suele tener 4-5 familias a la vez, no una sola. Ver la sección de limitaciones del TP
-de AMq1 para el detalle — se documenta ahí como un próximo paso natural (clasificación
+de AMq1 para el detalle, se documenta ahí como un próximo paso natural (clasificación
 multi-etiqueta) que no se aborda en esta primera versión productiva.
 
 **Nota sobre `n_accords` (limitación conocida):** una de las 6 features numéricas es la cantidad de
@@ -165,7 +162,7 @@ Lo que está implementado, corrido y probado en este repo (end-to-end, en Docker
 guardaba el modelo con `mlflow.sklearn.log_model(..., artifact_path=...)` (parámetro deprecado) y
 después reconstruía la URL del modelo a mano con `mlflow.get_artifact_uri(artifact_path)`. Con
 MLflow 3.x eso asume el layout viejo (`runs/<run_id>/artifacts/<path>`), pero el modelo se termina
-guardando bajo el esquema nuevo de "Logged Models" — al intentar cargarlo de vuelta daba
+guardando bajo el esquema nuevo de "Logged Models", al intentar cargarlo de vuelta daba
 `404 Not Found`, y como el registro del modelo en MLflow se creaba igual (quedaba con un `source`
 roto, apuntando a un archivo que no existe), la API caía silenciosamente al modelo de fallback sin
 avisar. Se corrigió usando `name=` en vez de
