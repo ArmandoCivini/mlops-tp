@@ -157,6 +157,7 @@ def processing_dag():
         system_site_packages=True,
     )
     def evaluate_champion_challenge():
+        import datetime
         import mlflow
         import awswrangler as wr
 
@@ -203,10 +204,16 @@ def processing_dag():
         y_pred_challenger = challenger_model.predict(X_test)
         f1_macro_challenger = f1_score(y_test.to_numpy().ravel(), y_pred_challenger, average="macro")
 
+        # Un run dedicado por evaluacion, en vez de escribir sobre un run existente del
+        # experimento: antes esto usaba `search_runs(...)[0]`, que devuelve un run cualquiera
+        # (podia ser incluso un run de ETL) y le pegaba encima las metricas de la comparacion.
         experiment = mlflow.set_experiment("Perfume Olfactory Family")
-        list_run = mlflow.search_runs([experiment.experiment_id], output_format="list")
 
-        with mlflow.start_run(run_id=list_run[0].info.run_id):
+        with mlflow.start_run(
+            run_name="Champion_vs_Challenger_" + datetime.datetime.today().strftime("%Y/%m/%d-%H:%M:%S"),
+            experiment_id=experiment.experiment_id,
+            tags={"experiment": "champion vs challenger", "dataset": "Parfumo perfumes"},
+        ):
             mlflow.log_metric("test_f1_macro_challenger", f1_macro_challenger)
             mlflow.log_metric("test_f1_macro_champion", f1_macro_champion)
 
