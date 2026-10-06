@@ -176,7 +176,12 @@ def transform(gold: pd.DataFrame, spec: dict):
         multi_hot(gold["base_list"], spec["vocab_base"]),
     ])
 
-    X_num = gold[spec["num_cols"]].copy()
+    # Se fuerza el tipo numérico antes de imputar: en inferencia el DataFrame tiene una sola
+    # fila y, si `release_year` o `concentration` vinieron en None, pandas infiere dtype
+    # `object` para esa columna. Ahí `fillna` hace un downcast implícito que pandas ya marca
+    # como deprecado (FutureWarning), y en una versión futura cambiaría de comportamiento
+    # justo en el camino que usa la API.
+    X_num = gold[spec["num_cols"]].apply(pd.to_numeric, errors="coerce")
     X_num["Release_Year"] = X_num["Release_Year"].fillna(spec["year_median"])
     if "n_accords" in X_num.columns:
         X_num["n_accords"] = X_num["n_accords"].fillna(spec["n_accords_median"])
