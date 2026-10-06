@@ -22,6 +22,10 @@
 x-airflow-common: &airflow-common
   build: './dockerfiles/airflow'
   image: ${AIRFLOW_IMAGE_NAME:-extending_airflow:latest}
+  # Sin esto, "docker compose up" (sin --build) intenta bajar esta imagen de Docker Hub como si
+  # fuera pública, y falla con "pull access denied" porque es nuestra, hecha a medida. Con
+  # pull_policy: build, Compose siempre la construye localmente, nunca intenta bajarla.
+  pull_policy: build
   profiles:
     - airflow
     - all
@@ -74,6 +78,7 @@ services:
     restart: always
     build: './dockerfiles/postgres'
     image: postgres_system
+    pull_policy: build
     container_name: postgres
     profiles:
       - airflow
@@ -114,7 +119,13 @@ services:
   
   s3:
     restart: always
-    image: quay.io/minio/minio:latest
+    # MinIO borró sus imágenes de Docker Hub (11-14/09/2026) y después bloqueó también los tags
+    # fijos de quay.io (24/09/2026) — llegamos a migrar todo el servicio a SeaweedFS como parche.
+    # El 27/09/2026 la cátedra actualizó el repo base (amq2-service-ml) para apuntar a este mirror
+    # de Docker Hub, mantenido por otro proyecto justamente para este problema (ver "Próximos
+    # pasos" en el README). Volvimos a MinIO con esta imagen para quedar alineados con el resto
+    # de la clase — ningún otro servicio cambia, todos siguen apuntando a "http://s3:9000".
+    image: coollabsio/minio:RELEASE.2025-04-22T22-12-26Z
     container_name: minio
     profiles:
       - mlflow
@@ -139,8 +150,8 @@ services:
       retries: 3
 
   create_s3_buckets:
-    image: quay.io/minio/mc:latest
-    container_name: minio_create_bucket
+    image: coollabsio/minio:RELEASE.2025-04-22T22-12-26Z
+    container_name: s3_create_buckets
     profiles:
       - mlflow
       - airflow
@@ -150,18 +161,18 @@ services:
     networks:
       - backend
     entrypoint: >
-      /bin/sh -c '
-      sleep 5;
-      /usr/bin/mc alias set s3 http://s3:9000 ${MINIO_ACCESS_KEY:-minio} ${MINIO_SECRET_ACCESS_KEY:-minio123};
-      /usr/bin/mc mb s3/${MLFLOW_BUCKET_NAME:-mlflow};
+      /bin/sh -c "
+      until (/usr/bin/mc alias set s3 http://s3:9000 ${MINIO_ACCESS_KEY:-minio} ${MINIO_SECRET_ACCESS_KEY:-minio123}) do echo '...esperando a que arranque minio...' && sleep 1; done;
       /usr/bin/mc mb s3/${DATA_REPO_BUCKET_NAME:-data};
+      /usr/bin/mc mb s3/${MLFLOW_BUCKET_NAME:-mlflow};
       exit 0;
-      '
+      "
 
   mlflow:
     restart: always
     build: "./dockerfiles/mlflow"
     image: mlflow
+    pull_policy: build
     container_name: mlflow
     profiles:
       - mlflow
@@ -180,8 +191,8 @@ services:
       - AWS_SECRET_ACCESS_KEY=${MINIO_SECRET_ACCESS_KEY:-minio123}
       - MLFLOW_S3_ENDPOINT_URL=http://s3:9000
     command: >
-      mlflow server 
-      --backend-store-uri postgresql://${PG_USER:-airflow}:${PG_PASSWORD:-airflow}@postgres:5432/mlflow_db
+      mlflow server
+      --backend-store-uri postgresql+psycopg2://${PG_USER:-airflow}:${PG_PASSWORD:-airflow}@postgres:5432/mlflow_db
       --host 0.0.0.0
       --default-artifact-root s3://${MLFLOW_BUCKET_NAME:-mlflow}/
       --workers 1
@@ -195,6 +206,7 @@ services:
     restart: always
     build: "./dockerfiles/jupyter"
     image: jupyter_perfume
+    pull_policy: build
     container_name: jupyter
     profiles:
       - mlflow
@@ -228,6 +240,7 @@ services:
       context: .
       dockerfile: dockerfiles/fastapi/Dockerfile
     image: backend_fastapi
+    pull_policy: build
     container_name: fastapi
     profiles:
       - all
