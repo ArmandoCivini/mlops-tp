@@ -75,36 +75,47 @@ def processing_dag():
 
             return X_train, y_train, X_test, y_test
 
-        def mlflow_track_experiment(model, X):
+        def mlflow_track_experiment(model, X, f1_macro_score):
+            """Loguea el challenger en un run propio del experimento y devuelve
+            (model_uri, run_id).
+
+            Forma soportada en MLflow 3.x: se usa `name=` (no el deprecado `artifact_path=`) y
+            la URI del modelo se toma de lo que devuelve `log_model(...)`, en vez de
+            reconstruirla con `mlflow.get_artifact_uri(...)`. Eso ultimo asume el layout viejo
+            (`runs/<run_id>/artifacts/<path>`), pero MLflow 3.x guarda el modelo bajo el esquema
+            nuevo de "Logged Models": la URI reconstruida apunta a un archivo que no existe, y el
+            registro del modelo queda con un `source` roto que despues falla al cargarse.
+            Es el mismo bug que ya se documento y corrigio en
+            `notebook_example/experiment_mlflow.ipynb` (ver README).
+            """
             experiment = mlflow.set_experiment("Perfume Olfactory Family")
 
-            mlflow.start_run(
+            with mlflow.start_run(
                 run_name="Challenger_run_" + datetime.datetime.today().strftime("%Y/%m/%d-%H:%M:%S"),
                 experiment_id=experiment.experiment_id,
                 tags={"experiment": "challenger models", "dataset": "Parfumo perfumes"},
                 log_system_metrics=True,
-            )
+            ) as run:
+                params = model.get_params()
+                params["model"] = type(model).__name__
 
-            params = model.get_params()
-            params["model"] = type(model).__name__
+                mlflow.log_params(params)
+                mlflow.log_metric("test_f1_macro", f1_macro_score)
 
-            mlflow.log_params(params)
+                signature = infer_signature(X, model.predict(X))
 
-            artifact_path = "model"
-            signature = infer_signature(X, model.predict(X))
+                model_info = mlflow.sklearn.log_model(
+                    sk_model=model,
+                    name="model",
+                    signature=signature,
+                    serialization_format="cloudpickle",
+                    registered_model_name="perfume_accord_model_dev",
+                    metadata={"model_data_version": 1},
+                )
 
-            mlflow.sklearn.log_model(
-                sk_model=model,
-                artifact_path=artifact_path,
-                signature=signature,
-                serialization_format="cloudpickle",
-                registered_model_name="perfume_accord_model_dev",
-                metadata={"model_data_version": 1},
-            )
+                return model_info.model_uri, run.info.run_id
 
-            return mlflow.get_artifact_uri(artifact_path)
-
-        def register_challenger(model, f1_macro_score, model_uri):
+        def register_challenger(model, f1_macro_score, model_uri, run_id):
             client = mlflow.MlflowClient()
             name = "perfume_accord_model_prod"
 
@@ -112,10 +123,12 @@ def processing_dag():
             tags["model"] = type(model).__name__
             tags["f1-macro"] = f1_macro_score
 
+            # El run_id viene del run que creo el modelo, no de parsear la URI: con el
+            # esquema de "Logged Models" de MLflow 3.x la URI ya no tiene el run id adentro.
             result = client.create_model_version(
                 name=name,
                 source=model_uri,
-                run_id=model_uri.split("/")[-3],
+                run_id=run_id,
                 tags=tags,
             )
 
@@ -135,8 +148,8 @@ def processing_dag():
         # desempeño en las familias chicas (ver TP de AMq1, sección 4.1).
         f1_macro = f1_score(y_test.to_numpy().ravel(), y_pred, average="macro")
 
-        artifact_uri = mlflow_track_experiment(challenger_model, X_train)
-        register_challenger(challenger_model, f1_macro, artifact_uri)
+        model_uri, run_id = mlflow_track_experiment(challenger_model, X_train, f1_macro)
+        register_challenger(challenger_model, f1_macro, model_uri, run_id)
 
     @task.virtualenv(
         task_id="evaluate_champion_challenger",
