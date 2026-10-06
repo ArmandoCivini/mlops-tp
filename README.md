@@ -4,6 +4,10 @@
 
 **Integrantes:** Jaime Ricardo Pinzon Aparicio, Tomás Civini, Francisco Facchini, Roosebelt Yonatan Carmen Aguirre.
 
+**Rama de entrega: `main`.** Todo el trabajo está mergeado ahí; `tp-perfume-clasificador` quedó
+como historial de desarrollo. Los cambios respecto de la entrega parcial están listados en
+[`CHANGELOG.md`](CHANGELOG.md).
+
 Este repo productiviza, en el ambiente de **ML Models and something more Inc.** (Docker + Apache
 Airflow + MLflow + PostgreSQL + MinIO + FastAPI), el modelo desarrollado en el TP final de
 **Aprendizaje de Máquina I**: *"Clasificación de familia olfativa en perfumes a partir de su
@@ -155,6 +159,12 @@ target, así que para un perfume *genuinamente nuevo* (por ejemplo, una fórmula
 ficha de Parfumo) ese dato no existe de antemano. En inferencia se imputa con la mediana de
 entrenamiento (ver `src/perfume_features.py`); es una limitación documentada, no un bug.
 
+**Una sola implementación de las features.** `src/perfume_features.py` es el único lugar donde
+vive la limpieza y el feature engineering. Lo importan los tres lados: el DAG de ETL (el módulo se
+monta en los contenedores de Airflow como `/opt/airflow/repo_src`), el notebook de entrenamiento y
+la API. Así no puede pasar que el pipeline de datos y el entrenamiento queden desincronizados por
+cambiar una copia y no la otra.
+
 ## Instalación y puesta en marcha (paso a paso)
 
 1. Instalá [Docker Desktop](https://docs.docker.com/desktop/) si todavía no lo tenés.
@@ -255,8 +265,11 @@ Lo que está implementado, corrido y probado en este repo (end-to-end, en Docker
   endpoint `POST /predict/` devuelve `200` con `dominant_accord` y las probabilidades, igual que
   el ejemplo de este README.
 - DAG de reentrenamiento (`retrain_the_model`) con comparación challenger vs. campeón por
-  `f1_macro` (implementado, pendiente de correr una vez que haya más de una corrida del ETL para
-  comparar contra).
+  `f1_macro`: implementado, pendiente de correr una vez que haya más de una corrida del ETL para
+  comparar contra. El registro del challenger usa la forma soportada en MLflow 3.x (ver el bug
+  más abajo), y cada evaluación campeón vs. challenger abre su propio run
+  (`Champion_vs_Challenger_<fecha>`) en vez de escribir métricas sobre un run existente del
+  experimento.
 
 **Bug encontrado y resuelto: `mlflow.get_artifact_uri()` con MLflow 3.x.** El notebook original
 guardaba el modelo con `mlflow.sklearn.log_model(..., artifact_path=...)` (parámetro deprecado) y
@@ -267,7 +280,9 @@ guardando bajo el esquema nuevo de "Logged Models", al intentar cargarlo de vuel
 roto, apuntando a un archivo que no existe), la API caía silenciosamente al modelo de fallback sin
 avisar. Se corrigió usando `name=` en vez de
 `artifact_path=` y tomando la URL directo del `model_info` que devuelve `log_model(...)`
-(`model_info.model_uri`), que es la forma soportada en MLflow 3.x.
+(`model_info.model_uri`), que es la forma soportada en MLflow 3.x. El mismo arreglo está aplicado
+en el DAG `retrain_the_model`, que además recibe el `run_id` explícito (con el esquema de "Logged
+Models" la URI del modelo ya no lo contiene, así que no se puede parsear de ahí).
 
 Lo que falta / próximos pasos:
 
