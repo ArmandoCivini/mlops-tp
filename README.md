@@ -241,12 +241,17 @@ Hay una suite de `pytest` en `tests/` que **no necesita Docker**: corre contra
 `src/perfume_features.py`, el `data.json` y el modelo de fallback que viajan en la imagen de
 FastAPI. Sirve para validar un cambio en la lógica de features sin levantar todo el stack.
 
+Requiere **Python 3.12**, la misma versión que corre en los contenedores (y la que recomienda
+la cátedra):
+
 ```bash
-python -m venv .venv
+python3.12 -m venv .venv
 source .venv/Scripts/activate      # Linux/macOS: source .venv/bin/activate
 pip install -r requirements-dev.txt
 pytest tests/ -q
 ```
+
+Salida esperada: `31 passed`, sin warnings.
 
 Qué cubre:
 
@@ -265,14 +270,16 @@ Qué cubre:
   y que `predict_proba` sea una distribución válida. No verifica una predicción exacta (un
   modelo no es determinista en ese sentido), sino que la salida caiga en el rango aceptable.
 
-⚠️ **Sobre las versiones.** El `model.pkl` se serializó con numpy 2.x y scikit-learn 1.8.0,
-así que para deserializarlo hace falta **numpy ≥ 2** (con numpy 1.x la carga falla con
-`PCG64 is not a known BitGenerator module`). Y como scikit-learn 1.8.0 requiere Python 3.11+,
-con Python 3.10 el máximo instalable es 1.7.2: los tests pasan, pero sklearn avisa con
-`InconsistentVersionWarning`. Para que el entorno de desarrollo replique exactamente al
-productivo, usar **Python 3.12**, que es la versión que corre en los contenedores. Si el
-pickle no se puede abrir, los safe checks se saltean con un mensaje explicando por qué, en
-vez de fallar.
+⚠️ **Por qué el entorno de tests está pineado.** El `model.pkl` se serializó con numpy 2.x y
+scikit-learn 1.8.0, así que `requirements-dev.txt` fija esa misma versión de scikit-learn que
+usan los contenedores: los objetos que guarda `pickle` no son compatibles entre versiones
+distintas. Y **numpy ≥ 2 no es opcional** — con numpy 1.x la carga del modelo falla con
+`PCG64 is not a known BitGenerator module`.
+
+Como scikit-learn 1.8.0 requiere Python 3.11+, con Python 3.10 el máximo instalable es 1.7.2:
+la suite pasa igual, pero sklearn avisa con `InconsistentVersionWarning` y el entorno deja de
+replicar al productivo. De ahí el requisito de Python 3.12. Si el pickle no se puede abrir, los
+safe checks se saltean con un mensaje explicando por qué, en lugar de fallar.
 
 ## Apagar los servicios
 
