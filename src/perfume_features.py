@@ -2,19 +2,21 @@
 Lógica de limpieza y feature engineering para el clasificador de familia olfativa
 (Perfume Astral / MLOps TP).
 
-Este módulo es la referencia canónica de las transformaciones. Se usa:
-  - En este mismo módulo, para prototipar y entrenar localmente (notebook_example).
-  - Como referencia de qué hace cada tarea del DAG de ETL (airflow/dags/etl_process.py).
-    Las tareas de Airflow decoradas con @task.virtualenv corren en un venv aislado por
-    tarea, así que no pueden importar módulos locales del repo: por eso el DAG reimplementa
-    esta misma lógica en línea dentro de cada tarea, en vez de importar este archivo. Si
-    cambiás algo acá (por ejemplo, K, las columnas numéricas, o el criterio de descarte de
-    clases), replicá el cambio también en el DAG para que entrenamiento y servicio no queden
-    desincronizados.
-  - En dockerfiles/fastapi/app.py, para transformar el request de la API con el mismo
-    criterio que se usó en entrenamiento (acá sí se puede importar, porque la API corre en
-    un único proceso con todas las dependencias instaladas, sin el aislamiento por tarea de
-    Airflow).
+Este módulo es la única implementación de las transformaciones: no hay copias. Lo usan
+los tres lados del pipeline, así que entrenamiento, ETL e inferencia no pueden
+desincronizarse.
+  - airflow/dags/etl_process.py (tarea `build_features`). Las tareas decoradas con
+    @task.virtualenv corren en un venv aislado, que no tiene el repo en el sys.path: el
+    directorio se monta en el contenedor como /opt/airflow/repo_src (ver `volumes` de
+    x-airflow-common en docker-compose.yaml) y la tarea lo agrega al sys.path antes de
+    importar este módulo.
+  - notebook_example/experiment_mlflow.ipynb, para prototipar y entrenar.
+  - dockerfiles/fastapi/app.py, para transformar el request de la API con el mismo criterio
+    que se usó en entrenamiento (el Dockerfile copia `src/` a la imagen).
+
+Los valores por defecto de los parámetros de abajo son los del TP de AMq1. El DAG de ETL
+los pasa explícitos, leyéndolos de las Airflow Variables (`airflow/secrets/variables.yaml`),
+así que se pueden cambiar sin tocar código.
 
 Basado en la Sección 2 del TP de Aprendizaje de Máquina I ("Clasificación de familia
 olfativa en perfumes a partir de su composición de notas", Francisco Facchini, nota 10/10).
@@ -42,11 +44,15 @@ def split_notes(s, sep=","):
     return [x.strip() for x in str(s).split(sep) if x.strip() and x.strip() != "NA"]
 
 
-def build_gold_dataset(df: pd.DataFrame) -> pd.DataFrame:
+def build_gold_dataset(
+    df: pd.DataFrame,
+    min_samples_per_class: int = MIN_SAMPLES_PER_CLASS,
+    min_valid_year: int = MIN_VALID_YEAR,
+) -> pd.DataFrame:
     """Limpieza (Sección 2.3-2.4 del TP de AMq1): a partir del catálogo crudo de Parfumo,
     se queda con las filas que tienen notas completas en las tres capas y accords, arma el
     target `dominant_accord`, descarta el artefacto de scraping, deduplica por (Name, Brand)
-    y descarta clases con menos de `MIN_SAMPLES_PER_CLASS` muestras.
+    y descarta clases con menos de `min_samples_per_class` muestras.
     """
     df = df.copy()
     df["Release_Year"] = pd.to_numeric(df["Release_Year"], errors="coerce")
@@ -59,7 +65,7 @@ def build_gold_dataset(df: pd.DataFrame) -> pd.DataFrame:
     gold = gold.drop_duplicates(subset=["Name", "Brand"])  # duplicados
 
     vc = gold["dominant_accord"].value_counts()
-    keep_classes = vc[vc >= MIN_SAMPLES_PER_CLASS].index.tolist()
+    keep_classes = vc[vc >= min_samples_per_class].index.tolist()
     gold = gold[gold["dominant_accord"].isin(keep_classes)].copy()
 
     for col, name in [("Top_Notes", "top"), ("Middle_Notes", "mid"), ("Base_Notes", "base")]:
@@ -68,7 +74,7 @@ def build_gold_dataset(df: pd.DataFrame) -> pd.DataFrame:
     gold["n_notas_total"] = gold["n_top"] + gold["n_mid"] + gold["n_base"]
     gold["n_accords"] = gold["accords_list"].apply(len)
 
-    gold.loc[gold["Release_Year"] < MIN_VALID_YEAR, "Release_Year"] = np.nan
+    gold.loc[gold["Release_Year"] < min_valid_year, "Release_Year"] = np.nan
 
     return gold.reset_index(drop=True)
 
@@ -91,18 +97,23 @@ def multi_hot(lists, vocab):
     return M
 
 
-def fit_feature_spec(gold: pd.DataFrame) -> dict:
+def fit_feature_spec(
+    gold: pd.DataFrame,
+    k_notes_per_layer: int = K_NOTES_PER_LAYER,
+    n_top_concentrations: int = N_TOP_CONCENTRATIONS,
+) -> dict:
     """A partir del dataset limpio (train), calcula todo lo que hace falta para poder
     transformar filas nuevas de la misma manera en el futuro (vocabularios de notas,
     mediana de año, categorías de concentración top-N). Esto es el equivalente al
-    `data_dict` / `data.json` del ejemplo de Heart Disease."""
-    vocab_top = top_k_vocab(gold["top_list"], K_NOTES_PER_LAYER)
-    vocab_mid = top_k_vocab(gold["mid_list"], K_NOTES_PER_LAYER)
-    vocab_base = top_k_vocab(gold["base_list"], K_NOTES_PER_LAYER)
+    `data_dict` / `data.json` del ejemplo de Heart Disease, y es exactamente lo que el DAG
+    de ETL serializa a `s3://data/data_info/data.json` para que lo lea la API."""
+    vocab_top = top_k_vocab(gold["top_list"], k_notes_per_layer)
+    vocab_mid = top_k_vocab(gold["mid_list"], k_notes_per_layer)
+    vocab_base = top_k_vocab(gold["base_list"], k_notes_per_layer)
 
     year_median = float(gold["Release_Year"].median())
 
-    top_conc = gold["Concentration"].value_counts().head(N_TOP_CONCENTRATIONS).index.tolist()
+    top_conc = gold["Concentration"].value_counts().head(n_top_concentrations).index.tolist()
 
     classes = sorted(gold["dominant_accord"].unique().tolist())
 
@@ -118,8 +129,8 @@ def fit_feature_spec(gold: pd.DataFrame) -> dict:
     # la mediana de train en vez de pedirlo como input obligatorio.
     n_accords_median = float(gold["n_accords"].median())
 
-    return {
-        "k_notes_per_layer": K_NOTES_PER_LAYER,
+    spec = {
+        "k_notes_per_layer": k_notes_per_layer,
         "vocab_top": vocab_top,
         "vocab_mid": vocab_mid,
         "vocab_base": vocab_base,
@@ -127,8 +138,31 @@ def fit_feature_spec(gold: pd.DataFrame) -> dict:
         "year_median": year_median,
         "n_accords_median": n_accords_median,
         "top_concentrations": top_conc,
+        # Las categorías de concentración y el orden de las columnas quedan congelados acá:
+        # en inferencia se transforma una sola fila, así que no se pueden re-deducir del
+        # batch (ver `transform`).
+        "conc_categories": conc_categories(top_conc),
         "classes": classes,
     }
+    spec["feature_names"] = feature_names_from_spec(spec)
+    return spec
+
+
+def conc_categories(top_concentrations):
+    """Categorías de la dummy de concentración: las top-N de train, más `Unknown` (faltante)
+    y `Otras` (concentración vista pero fuera del top-N)."""
+    return list(top_concentrations) + ["Unknown", "Otras"]
+
+
+def feature_names_from_spec(spec: dict) -> list:
+    """Nombres de las columnas de X, en el mismo orden en que `transform` las apila."""
+    return (
+        [f"top__{w}" for w in spec["vocab_top"]]
+        + [f"mid__{w}" for w in spec["vocab_mid"]]
+        + [f"base__{w}" for w in spec["vocab_base"]]
+        + list(spec["num_cols"])
+        + [f"conc_{c}" for c in spec["conc_categories"]]
+    )
 
 
 def transform(gold: pd.DataFrame, spec: dict):
@@ -147,25 +181,21 @@ def transform(gold: pd.DataFrame, spec: dict):
     if "n_accords" in X_num.columns:
         X_num["n_accords"] = X_num["n_accords"].fillna(spec["n_accords_median"])
 
-    top_conc = spec["top_concentrations"]
+    top_conc = list(spec["top_concentrations"])
+    categories = list(spec.get("conc_categories") or conc_categories(top_conc))
     conc = gold["Concentration"].fillna("Unknown")
     conc = conc.where(conc.isin(top_conc + ["Unknown"]), "Otras")
-    conc_categories = top_conc + ["Unknown", "Otras"]
-    X_conc = pd.get_dummies(pd.Categorical(conc, categories=conc_categories), prefix="conc")
+    X_conc = pd.get_dummies(pd.Categorical(conc, categories=categories), prefix="conc")
     # Aseguramos que todas las columnas de concentración existan siempre, en el mismo orden,
     # aunque en este batch no haya aparecido alguna categoría (crítico en inferencia con 1 fila).
-    for c in conc_categories:
+    for c in categories:
         col = f"conc_{c}"
         if col not in X_conc.columns:
             X_conc[col] = 0
-    X_conc = X_conc[[f"conc_{c}" for c in conc_categories]]
+    X_conc = X_conc[[f"conc_{c}" for c in categories]]
 
-    feature_names = (
-        [f"top__{w}" for w in spec["vocab_top"]]
-        + [f"mid__{w}" for w in spec["vocab_mid"]]
-        + [f"base__{w}" for w in spec["vocab_base"]]
-        + spec["num_cols"]
-        + list(X_conc.columns)
+    feature_names = spec.get("feature_names") or feature_names_from_spec(
+        {**spec, "conc_categories": categories}
     )
 
     X = np.hstack([

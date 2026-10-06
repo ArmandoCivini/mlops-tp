@@ -21,9 +21,8 @@ Guarda el resultado (train/test + diccionario de features para que `dockerfiles/
 pueda transformar requests nuevos de la misma manera) en el bucket `s3://data`, y trackea el
 dataset en MLflow, experimento `Perfume Olfactory Family`.
 
-Ver `src/perfume_features.py` en la raíz del repo para la versión documentada y reutilizable de
-esta misma lógica (se reimplementa acá en línea porque las tareas `@task.virtualenv` corren en un
-venv aislado por tarea y no pueden importar módulos locales del repo).
+La limpieza y el feature engineering viven en `src/perfume_features.py`, el mismo módulo que usan
+el notebook de entrenamiento y la API: este DAG lo importa, no lo reimplementa.
 """
 
 default_args = {
@@ -78,128 +77,65 @@ def process_perfume_data():
     )
     def build_features():
         """
-        Limpieza + feature engineering (Sección 2 del TP de AMq1): dropea filas sin notas o
+        Limpieza + feature engineering (Seccion 2 del TP de AMq1): dropea filas sin notas o
         accords completos, descarta el artefacto de scraping, deduplica, descarta clases
-        chicas, arma el target y las 256 features (240 notas multi-hot + 6 numéricas +
-        dummies de concentración). Guarda la matriz final y el diccionario de features
+        chicas, arma el target y las 256 features (240 notas multi-hot + 6 numericas +
+        dummies de concentracion). Guarda la matriz final y el diccionario de features
         (`data_info/data.json`) que usan tanto `split_dataset` como la API para transformar
         requests nuevos de la misma manera.
+
+        La transformacion no se implementa aca: se importa de `src/perfume_features.py`, que
+        es el mismo modulo que usan el notebook de entrenamiento y la API. Antes esta tarea
+        tenia una copia en linea de esa logica, y cualquier cambio en una sola de las dos
+        copias desincronizaba el pipeline del entrenamiento.
         """
         import json
+        import sys
         import datetime as dt
-        from collections import Counter
 
         import boto3
         import mlflow
-        import numpy as np
         import pandas as pd
         import awswrangler as wr
         from airflow.models import Variable
+
+        # Las tareas @task.virtualenv corren en un venv aislado, que no tiene el repo en el
+        # sys.path. El directorio src/ del repo se monta en el contenedor como
+        # /opt/airflow/repo_src (ver `volumes` de x-airflow-common en docker-compose.yaml),
+        # asi que basta con agregarlo al path para importar el modulo compartido.
+        sys.path.insert(0, "/opt/airflow/repo_src")
+        from perfume_features import build_gold_dataset, fit_feature_spec, transform
 
         min_samples = int(Variable.get("min_samples_per_class_perfume"))
         k_notes = int(Variable.get("k_notes_per_layer_perfume"))
         n_top_conc = int(Variable.get("n_top_concentrations_perfume"))
         min_year = int(Variable.get("min_valid_year_perfume"))
 
-        def split_notes(s, sep=","):
-            if pd.isna(s):
-                return []
-            return [x.strip() for x in str(s).split(sep) if x.strip() and x.strip() != "NA"]
-
-        def top_k_vocab(lists, k):
-            c = Counter()
-            for l in lists:
-                c.update(l)
-            return [w for w, _ in c.most_common(k)]
-
-        def multi_hot(lists, vocab):
-            idx = {w: i for i, w in enumerate(vocab)}
-            M = np.zeros((len(lists), len(vocab)), dtype=np.int8)
-            for i, l in enumerate(lists):
-                for w in l:
-                    j = idx.get(w)
-                    if j is not None:
-                        M[i, j] = 1
-            return M
-
         df = wr.s3.read_csv("s3://data/raw/parfumo_perfumes.csv")
-        df["Release_Year"] = pd.to_numeric(df["Release_Year"], errors="coerce")
 
-        gold = df.dropna(subset=["Top_Notes", "Middle_Notes", "Base_Notes", "Main_Accords"]).copy()
-        gold["accords_list"] = gold["Main_Accords"].apply(split_notes)
-        gold["dominant_accord"] = gold["accords_list"].apply(lambda l: l[0] if l else None)
-        gold = gold[gold["dominant_accord"] != "Main Accords"]  # artefacto de scraping
-        gold = gold.drop_duplicates(subset=["Name", "Brand"])
-
-        vc = gold["dominant_accord"].value_counts()
-        keep_classes = vc[vc >= min_samples].index.tolist()
-        gold = gold[gold["dominant_accord"].isin(keep_classes)].copy()
-
-        for col, name in [("Top_Notes", "top"), ("Middle_Notes", "mid"), ("Base_Notes", "base")]:
-            gold[f"{name}_list"] = gold[col].apply(split_notes)
-            gold[f"n_{name}"] = gold[f"{name}_list"].apply(len)
-        gold["n_notas_total"] = gold["n_top"] + gold["n_mid"] + gold["n_base"]
-        gold["n_accords"] = gold["accords_list"].apply(len)
-        gold.loc[gold["Release_Year"] < min_year, "Release_Year"] = np.nan
-
-        vocab_top = top_k_vocab(gold["top_list"], k_notes)
-        vocab_mid = top_k_vocab(gold["mid_list"], k_notes)
-        vocab_base = top_k_vocab(gold["base_list"], k_notes)
-
-        num_cols = ["Release_Year", "n_top", "n_mid", "n_base", "n_notas_total", "n_accords"]
-        year_median = float(gold["Release_Year"].median())
-        n_accords_median = float(gold["n_accords"].median())
-
-        top_conc = gold["Concentration"].value_counts().head(n_top_conc).index.tolist()
-        conc_categories = top_conc + ["Unknown", "Otras"]
-        conc = gold["Concentration"].fillna("Unknown")
-        conc = conc.where(conc.isin(top_conc + ["Unknown"]), "Otras")
-        X_conc = pd.get_dummies(pd.Categorical(conc, categories=conc_categories), prefix="conc")
-        for c in conc_categories:
-            col = f"conc_{c}"
-            if col not in X_conc.columns:
-                X_conc[col] = 0
-        X_conc = X_conc[[f"conc_{c}" for c in conc_categories]]
-
-        X_notes = np.hstack([
-            multi_hot(gold["top_list"], vocab_top),
-            multi_hot(gold["mid_list"], vocab_mid),
-            multi_hot(gold["base_list"], vocab_base),
-        ])
-        X_num = gold[num_cols].copy()
-        X_num["Release_Year"] = X_num["Release_Year"].fillna(year_median)
-        X_num["n_accords"] = X_num["n_accords"].fillna(n_accords_median)
-
-        feature_names = (
-            [f"top__{w}" for w in vocab_top]
-            + [f"mid__{w}" for w in vocab_mid]
-            + [f"base__{w}" for w in vocab_base]
-            + num_cols
-            + list(X_conc.columns)
+        gold = build_gold_dataset(
+            df,
+            min_samples_per_class=min_samples,
+            min_valid_year=min_year,
         )
+        spec = fit_feature_spec(
+            gold,
+            k_notes_per_layer=k_notes,
+            n_top_concentrations=n_top_conc,
+        )
+        X, y, feature_names = transform(gold, spec)
 
-        X = np.hstack([X_notes.astype(float), X_num.to_numpy(dtype=float), X_conc.to_numpy(dtype=float)])
         features_df = pd.DataFrame(X, columns=feature_names)
-        features_df["dominant_accord"] = gold["dominant_accord"].to_numpy()
+        features_df["dominant_accord"] = y
 
         wr.s3.to_csv(df=features_df, path="s3://data/final/parfumo_features.csv", index=False)
 
-        data_dict = {
-            "k_notes_per_layer": k_notes,
-            "vocab_top": vocab_top,
-            "vocab_mid": vocab_mid,
-            "vocab_base": vocab_base,
-            "num_cols": num_cols,
-            "year_median": year_median,
-            "n_accords_median": n_accords_median,
-            "top_concentrations": top_conc,
-            "conc_categories": conc_categories,
-            "feature_names": feature_names,
-            "classes": sorted(gold["dominant_accord"].unique().tolist()),
-            "n_rows": int(features_df.shape[0]),
-            "n_features": int(len(feature_names)),
-            "date": dt.datetime.today().strftime("%Y/%m/%d-%H:%M:%S"),
-        }
+        # El spec es lo que la API necesita para transformar un request igual que en
+        # entrenamiento; el resto son metadatos de esta corrida.
+        data_dict = dict(spec)
+        data_dict["n_rows"] = int(features_df.shape[0])
+        data_dict["n_features"] = int(len(feature_names))
+        data_dict["date"] = dt.datetime.today().strftime("%Y/%m/%d-%H:%M:%S")
         data_string = json.dumps(data_dict, indent=2)
 
         s3 = boto3.client("s3", endpoint_url="http://s3:9000")
@@ -215,7 +151,7 @@ def process_perfume_data():
             log_system_metrics=True,
         ):
             mlflow.log_param("n_rows_gold", features_df.shape[0])
-            mlflow.log_param("n_classes", gold["dominant_accord"].nunique())
+            mlflow.log_param("n_classes", len(spec["classes"]))
             mlflow.log_param("n_features", len(feature_names))
             mlflow.log_param("min_samples_per_class", min_samples)
             mlflow.log_param("k_notes_per_layer", k_notes)

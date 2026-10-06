@@ -63,6 +63,11 @@ x-airflow-common: &airflow-common
     # perfumes: el CSV se versiona en el repo y el DAG `process_perfume_data` solo lo publica
     # en el bucket `s3://data` (tarea `get_data`, ver airflow/dags/etl_process.py).
     - ${AIRFLOW_PROJ_DIR:-./airflow}/../data:/opt/airflow/data_raw:ro
+    # Modulo compartido de feature engineering (src/perfume_features.py), de solo lectura.
+    # Es la misma implementacion que usan el notebook de entrenamiento y la API: la tarea
+    # `build_features` del DAG de ETL lo agrega al sys.path y lo importa desde aca, en vez
+    # de mantener una copia de esa logica adentro del DAG.
+    - ${AIRFLOW_PROJ_DIR:-./airflow}/../src:/opt/airflow/repo_src:ro
   networks:
     - frontend
     - backend
