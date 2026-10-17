@@ -42,7 +42,7 @@ def processing_dag():
 
     @task.virtualenv(
         task_id="train_the_challenger_model",
-        requirements=["scikit-learn==1.3.2", "mlflow==3.1.4", "awswrangler==3.6.0"],
+        requirements=["scikit-learn==1.8.0", "mlflow==3.1.4", "awswrangler==3.6.0", "pyarrow==17.0.0"],
         system_site_packages=True,
     )
     def train_the_challenger_model():
@@ -153,7 +153,7 @@ def processing_dag():
 
     @task.virtualenv(
         task_id="evaluate_champion_challenger",
-        requirements=["scikit-learn==1.3.2", "mlflow==3.1.4", "awswrangler==3.6.0"],
+        requirements=["scikit-learn==1.8.0", "mlflow==3.1.4", "awswrangler==3.6.0", "pyarrow==17.0.0"],
         system_site_packages=True,
     )
     def evaluate_champion_challenge():

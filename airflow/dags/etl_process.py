@@ -47,7 +47,7 @@ def process_perfume_data():
 
     @task.virtualenv(
         task_id="get_data",
-        requirements=["awswrangler==3.6.0"],
+        requirements=["awswrangler==3.6.0", "pyarrow==17.0.0"],
         system_site_packages=True,
     )
     def get_data():
@@ -72,7 +72,7 @@ def process_perfume_data():
 
     @task.virtualenv(
         task_id="build_features",
-        requirements=["awswrangler==3.6.0", "mlflow==3.1.4"],
+        requirements=["awswrangler==3.6.0", "pyarrow==17.0.0", "mlflow==3.1.4"],
         system_site_packages=True,
     )
     def build_features():
@@ -166,7 +166,7 @@ def process_perfume_data():
 
     @task.virtualenv(
         task_id="split_dataset",
-        requirements=["awswrangler==3.6.0"],
+        requirements=["awswrangler==3.6.0", "pyarrow==17.0.0"],
         system_site_packages=True,
     )
     def split_dataset():
