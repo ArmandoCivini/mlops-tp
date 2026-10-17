@@ -4,6 +4,49 @@ Cambios del TP de MLOps I (clasificador de familia olfativa en perfumes) posteri
 **entrega parcial** corregida por la cátedra. El formato sigue, a grandes rasgos,
 [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/).
 
+## [Fase 1 — verificación de punta a punta] — 2026-10-17
+
+Se levantó el stack desde cero y se corrió todo el flujo: ETL (`process_perfume_data`), notebook
+`experiment_mlflow.ipynb` (registro del campeón), DAG `retrain_the_model` y API (`/predict/`).
+Al hacerlo aparecieron problemas de versiones que impedían correr el flujo; se corrigieron así.
+
+### Corregido
+
+- **`airflow/dags/etl_process.py` — `pyarrow` sin fijar.** La última versión de `pyarrow` exigía
+  NumPy 2, incompatible con el NumPy 1.26.4 de la imagen de Airflow, y `get_data` fallaba. Se fijó
+  `pyarrow==17.0.0` en las tareas del ETL.
+- **`airflow/dags/retrain_the_model.py` — scikit-learn desalineado.** El venv de las tareas usaba
+  scikit-learn 1.3.2 y el modelo se entrena (Jupyter) y se sirve (API) con 1.8.0. Se alineó a 1.8.0.
+- **`airflow/dags/retrain_the_model.py` — campeón ilegible por diferencia de NumPy.** El campeón lo
+  guarda Jupyter con NumPy 2.5.4; el venv heredaba el NumPy 1.26.4 de Airflow y
+  `mlflow.sklearn.load_model` fallaba con `PCG64 is not a known BitGenerator module`. Se fijaron en
+  el venv `numpy==2.5.4`, `pandas==2.3.3`, `pyarrow==20.0.0` y `awswrangler==3.12.1` (la 3.6.0 no
+  resolvía junto con NumPy 2 y MLflow 3.17).
+- **`airflow/dags/retrain_the_model.py` — registro de versiones con MLflow 3.17.1.** Con el servidor
+  en 3.17.1, `create_model_version` rechaza fuentes `models:/m-...` si no se pasa `model_id`. La
+  tarea de entrenamiento ahora devuelve `model_info.model_id` y `register_challenger` lo pasa.
+  El cliente del venv se fijó en `mlflow==3.17.1`, igual que el servidor.
+
+### Verificado
+
+- ETL: 21.032 filas, 256 features, 20 clases.
+- Notebook (`N_TRIALS=15`): campeón HistGradientBoosting, F1 macro de test 0.1754, registrado como
+  `perfume_accord_model_prod` v1 con alias `champion`.
+- `retrain_the_model`: ambas tareas en `success`. Challenger F1 macro ≈ 0.172 vs. campeón 0.1754;
+  `Winner` = campeón, el alias `champion` queda en v1 y el alias `challenger` se elimina.
+- API: `POST /predict/` devuelve 200 con `dominant_accord` y `top_probabilities`.
+
+### Limitaciones conocidas
+
+- No se ejercitó la rama de **promoción** (challenger que supera al campeón): en esta corrida ganó
+  el campeón.
+- El F1 es bajo (0.1754 con `N_TRIALS=15`, contra ≈0.194 con `N_TRIALS=30` en la corrida de
+  septiembre); no se buscó mejorarlo en esta fase.
+- Las versiones de MLflow (servidor y Jupyter) no están fijadas en los Dockerfiles; conviene
+  fijarlas para evitar el mismo tipo de desfase.
+- La búsqueda con Optuna necesita bastante memoria: con Docker limitado a ~8 GB terminó
+  `SIGKILL (-9)`; funcionó subiendo el límite de memoria de Docker.
+
 ## [No publicado] — camino a la entrega final
 
 Esta tanda responde, punto por punto, a la devolución de la entrega parcial.
