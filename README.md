@@ -293,7 +293,33 @@ Para además borrar toda la infraestructura (perdiendo lo que haya en los bucket
 docker compose down --rmi all --volumes
 ```
 
-## Estado de avance (entrega parcial)
+## Estado de avance (entrega final)
+
+### Verificación de la entrega final (17/10/2026)
+
+Se levantó el stack desde cero con `docker compose`, a partir de un clon limpio del repo, y se
+corrió el flujo completo:
+
+- **ETL** (`process_perfume_data`): las 3 tareas en `success`; 21.032 perfumes limpios, 20 clases,
+  256 features.
+- **Notebook** (`experiment_mlflow.ipynb`): búsqueda con Optuna con `N_TRIALS=15` (se redujo por
+  memoria). Campeón: HistGradientBoosting, F1 macro de test 0.1754, registrado como
+  `perfume_accord_model_prod` versión 1 con alias `champion`.
+- **Reentrenamiento** (`retrain_the_model`): ambas tareas en `success`. El challenger obtuvo
+  F1 macro ≈ 0.172 contra 0.1754 del campeón; ganó el campeón, el alias `champion` quedó en la
+  versión 1 y el alias `challenger` se eliminó.
+- **API**: `POST /predict/` devuelve 200 con `dominant_accord` y `top_probabilities`.
+
+Para lograrlo hubo que corregir versiones de dependencias en los DAGs (`pyarrow`, scikit-learn,
+NumPy/pandas, `awswrangler`, MLflow); el detalle está en `CHANGELOG.md`.
+
+Limitaciones: en esta corrida no se ejercitó la **promoción** de un challenger que supere al
+campeón (ganó el campeón); el F1 es bajo y no se buscó mejorarlo; las versiones de MLflow en los
+Dockerfiles no están fijadas; Docker necesita memoria suficiente para la búsqueda con Optuna
+(con ~8 GB el proceso terminó con `SIGKILL`).
+
+### Estado a la entrega parcial
+
 
 Lo que está implementado, corrido y probado en este repo (end-to-end, en Docker):
 
@@ -311,8 +337,8 @@ Lo que está implementado, corrido y probado en este repo (end-to-end, en Docker
   endpoint `POST /predict/` devuelve `200` con `dominant_accord` y las probabilidades, igual que
   el ejemplo de este README.
 - DAG de reentrenamiento (`retrain_the_model`) con comparación challenger vs. campeón por
-  `f1_macro`: implementado, pendiente de correr una vez que haya más de una corrida del ETL para
-  comparar contra. El registro del challenger usa la forma soportada en MLflow 3.x (ver el bug
+  `f1_macro`: implementado y corrido de punta a punta el 17/10/2026 (ver la
+  verificación de arriba). El registro del challenger usa la forma soportada en MLflow 3.x (ver el bug
   más abajo), y cada evaluación campeón vs. challenger abre su propio run
   (`Champion_vs_Challenger_<fecha>`) en vez de escribir métricas sobre un run existente del
   experimento.

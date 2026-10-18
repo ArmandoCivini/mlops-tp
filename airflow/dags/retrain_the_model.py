@@ -42,7 +42,7 @@ def processing_dag():
 
     @task.virtualenv(
         task_id="train_the_challenger_model",
-        requirements=["scikit-learn==1.3.2", "mlflow==3.1.4", "awswrangler==3.6.0"],
+        requirements=["scikit-learn==1.8.0", "mlflow==3.17.1", "awswrangler==3.12.1", "pyarrow==20.0.0", "numpy==2.5.4", "pandas==2.3.3"],
         system_site_packages=True,
     )
     def train_the_challenger_model():
@@ -113,9 +113,9 @@ def processing_dag():
                     metadata={"model_data_version": 1},
                 )
 
-                return model_info.model_uri, run.info.run_id
+                return model_info.model_uri, run.info.run_id, model_info.model_id
 
-        def register_challenger(model, f1_macro_score, model_uri, run_id):
+        def register_challenger(model, f1_macro_score, model_uri, run_id, model_id):
             client = mlflow.MlflowClient()
             name = "perfume_accord_model_prod"
 
@@ -130,6 +130,7 @@ def processing_dag():
                 source=model_uri,
                 run_id=run_id,
                 tags=tags,
+                model_id=model_id,
             )
 
             client.set_registered_model_alias(name, "challenger", result.version)
@@ -148,12 +149,12 @@ def processing_dag():
         # desempeño en las familias chicas (ver TP de AMq1, sección 4.1).
         f1_macro = f1_score(y_test.to_numpy().ravel(), y_pred, average="macro")
 
-        model_uri, run_id = mlflow_track_experiment(challenger_model, X_train, f1_macro)
-        register_challenger(challenger_model, f1_macro, model_uri, run_id)
+        model_uri, run_id, model_id = mlflow_track_experiment(challenger_model, X_train, f1_macro)
+        register_challenger(challenger_model, f1_macro, model_uri, run_id, model_id)
 
     @task.virtualenv(
         task_id="evaluate_champion_challenger",
-        requirements=["scikit-learn==1.3.2", "mlflow==3.1.4", "awswrangler==3.6.0"],
+        requirements=["scikit-learn==1.8.0", "mlflow==3.17.1", "awswrangler==3.12.1", "pyarrow==20.0.0", "numpy==2.5.4", "pandas==2.3.3"],
         system_site_packages=True,
     )
     def evaluate_champion_challenge():
