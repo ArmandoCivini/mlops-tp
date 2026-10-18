@@ -8,7 +8,33 @@ Cambios del TP de MLOps I (clasificador de familia olfativa en perfumes) posteri
 
 Esta tanda responde, punto por punto, a la devolución de la entrega parcial.
 
+### Agregado
+
+- **Suite de tests automáticos con `pytest`** (31 tests, ~3 s, sin Docker), que cubre lo que la
+  clase 1 pidió como pruebas contra un *golden dataset* y *safe checks* previos a producción:
+  - `tests/test_perfume_features.py` — la transformación produce siempre las mismas 256 columnas
+    en el mismo orden, sobre el dataset entero y sobre la única fila de un request de la API (el
+    test que previene el *training-serving skew*), más el manejo de faltantes, concentraciones
+    desconocidas y notas fuera del vocabulario.
+  - `tests/test_etl_contract.py` — el contrato de la limpieza de la Sección 2 del TP de AMq1,
+    incluyendo que `min_samples_per_class` y `k_notes_per_layer` (leídos de las Airflow
+    Variables) tengan efecto real.
+  - `tests/test_dataset_golden_numbers.py` — *golden numbers* del catálogo completo: 21.032
+    filas limpias, 256 features, 20 clases.
+  - `tests/test_model_safe_check.py` — *safe checks* del modelo empaquetado: features y clases
+    coinciden con `data.json`, `predict_proba` es una distribución válida y `predict` coincide
+    con el argmax.
+- `requirements-dev.txt` con el entorno para correrlos fuera de Docker (Python 3.12 y
+  `scikit-learn==1.8.0`, las mismas versiones que los contenedores) y sección **Tests** en el
+  README con las instrucciones.
+
 ### Corregido
+
+- **`transform()` hacía un downcast implícito deprecado en el camino de inferencia de la API**
+  (bug destapado por los tests): con un request de una sola fila y `release_year` en `None`, la
+  columna quedaba con dtype `object` y el `fillna` emitía un `FutureWarning` de pandas. Ahora
+  las columnas numéricas pasan por `pd.to_numeric` antes de imputar; verificado que la matriz,
+  el target y el `data.json` quedan idénticos sobre el CSV completo.
 
 - **`retrain_the_model`: registro del challenger con el patrón roto de MLflow 3.x.** El DAG
   todavía usaba `mlflow.sklearn.log_model(..., artifact_path="model")` junto con
