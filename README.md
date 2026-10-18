@@ -235,6 +235,52 @@ cambiar una copia y no la otra.
    antes solo resamplea el mismo catálogo — es esperable que challenger y campeón midan parecido
    (ver nota en el propio DAG).
 
+## Tests
+
+Hay una suite de `pytest` en `tests/` que **no necesita Docker**: corre contra
+`src/perfume_features.py`, el `data.json` y el modelo de fallback que viajan en la imagen de
+FastAPI. Sirve para validar un cambio en la lógica de features sin levantar todo el stack.
+
+Requiere **Python 3.12**, la misma versión que corre en los contenedores (y la que recomienda
+la cátedra):
+
+```bash
+python3.12 -m venv .venv
+source .venv/Scripts/activate      # Linux/macOS: source .venv/bin/activate
+pip install -r requirements-dev.txt
+pytest tests/ -q
+```
+
+Salida esperada: `31 passed`, sin warnings.
+
+Qué cubre:
+
+- `test_perfume_features.py` — que la transformación produzca siempre las mismas 256 columnas
+  en el mismo orden, ya sea sobre el dataset entero o sobre la única fila de un request de la
+  API. Es el test que previene el *training-serving skew*: que el entrenamiento y el servicio
+  se desincronicen. Además, el manejo de faltantes (año, `n_accords`), de concentraciones
+  desconocidas (`Otras`) y de notas fuera del vocabulario.
+- `test_etl_contract.py` — el contrato de la limpieza de la Sección 2 del TP de AMq1:
+  deduplicación por `(Name, Brand)`, descarte del artefacto de scraping `"Main Accords"`,
+  mínimo de muestras por clase, años inválidos a `NaN`, coherencia de las features derivadas.
+- `test_dataset_golden_numbers.py` — *golden numbers* sobre el catálogo completo: que sigan
+  saliendo 21.032 filas, 256 features y 20 clases.
+- `test_model_safe_check.py` — *safe checks* del modelo: que la cantidad de features y las
+  clases coincidan con el `data.json`, que prediga siempre una de las 20 familias conocidas,
+  y que `predict_proba` sea una distribución válida. No verifica una predicción exacta (un
+  modelo no es determinista en ese sentido), sino que la salida caiga en el rango aceptable.
+
+⚠️ **Por qué el entorno de tests está pineado.** El `model.pkl` se serializó con numpy 2.x y
+scikit-learn 1.8.0, así que `requirements-dev.txt` fija esa misma versión de scikit-learn que
+usan los contenedores: los objetos que guarda `pickle` no son compatibles entre versiones
+distintas. Y **numpy ≥ 2 no es opcional** — con numpy 1.x la carga del modelo falla con
+`PCG64 is not a known BitGenerator module`.
+
+Como scikit-learn 1.8.0 requiere Python 3.11+, con Python 3.10 el máximo instalable es 1.7.2:
+la suite pasa igual, pero sklearn avisa con `InconsistentVersionWarning` y el entorno deja de
+replicar al productivo. De ahí el requisito de Python 3.12. Si el pickle no se puede abrir, los
+safe checks se saltean con un mensaje explicando por qué, en lugar de fallar.
+
 ## Apagar los servicios
 
 ```bash
@@ -294,8 +340,8 @@ Lo que falta / próximos pasos:
 - Evaluar si vale la pena encarar el desbalance de clases (mencionado como limitación en el TP de
   AMq1: `class_weight='balanced'`, SMOTE, o submuestreo de la clase mayoritaria) ahora que el
   pipeline está automatizado y es más barato iterar.
-- Sumar tests automáticos básicos (por ejemplo, un test de que `transform()` produce siempre 256
-  columns en el mismo orden) y CI.
+- Montar CI que corra la suite de tests (ver la sección **Tests**) en cada push. Los tests ya
+  están; lo que falta es que corran solos.
 - **Historial del problema con la imagen de MinIO (ya resuelto).** MinIO borró sus imágenes
   públicas de Docker Hub el 11-14/09/2026, y el 24/09/2026 bloqueó también los tags fijos de
   `quay.io`. Como parche temporal llegamos a reemplazar el servicio `s3` por

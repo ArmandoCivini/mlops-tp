@@ -1,0 +1,16 @@
+# Entorno para correr los tests fuera de Docker (ver seccion "Tests" del README).
+#
+# Requiere Python 3.12, que es la version que corre en los contenedores y la que recomienda
+# la catedra. Con Python 3.10 no se puede instalar scikit-learn 1.8.0 (pide 3.11+) y los
+# safe checks del modelo pasan igual, pero con InconsistentVersionWarning al deserializar
+# dockerfiles/fastapi/files/model.pkl.
+#
+# scikit-learn fijo en la misma version que dockerfiles/{fastapi,jupyter}/requirements.txt:
+# los objetos que pickle guarda no son compatibles entre versiones distintas.
+#
+# numpy>=2 NO es opcional: el model.pkl se serializo con numpy 2.x y con numpy 1.x la carga
+# falla con "PCG64 is not a known BitGenerator module".
+numpy>=2
+pandas>=2
+scikit-learn==1.8.0
+pytest>=8
